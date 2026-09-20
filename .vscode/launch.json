@@ -1,0 +1,29 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug harris",
+            "type": "cppdbg",
+            "request": "launch",
+
+            "program": "${workspaceFolder}/harris.exe",
+            "args": [],
+
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+
+            "environment": [
+                {
+                    "name": "PATH",
+                    "value": "D:\\MyFiles\\Year1a\\cv\\build\\bin;${env:PATH}"
+                }
+            ],
+
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "miDebuggerPath": "E:\\msys2\\mingw64\\bin\\gdb.exe",
+
+            "preLaunchTask": "Build harris.cpp"
+        }
+    ]
+}

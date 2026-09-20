@@ -1,0 +1,7 @@
+{
+    "C_Cpp.default.compilerPath": "E:/msys2/mingw64/bin/g++.exe",
+    "C_Cpp.default.cppStandard": "c++17",
+    "terminal.integrated.env.windows": {
+        "PATH": "D:\\MyFiles\\Year1a\\cv\\build\\bin;${env:PATH}"
+    }
+}
