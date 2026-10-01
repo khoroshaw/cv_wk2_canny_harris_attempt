@@ -4,37 +4,17 @@
 #include<opencv2/imgproc.hpp>
 #include<opencv2/imgcodecs.hpp>
 #include<opencv2/highgui.hpp>
-
-double calcGaussianFilter(double *weights, int wind_size, double sigma)
-{
-    std::cout << "Calculating Gaussian weights... " << std::endl;
-
-    double PI = 3.1415926;
-    double denom_no_PI = 2 * sigma * sigma;
-    double sum1 = 0;
-    for(int i = 0; i < wind_size; i++) // 竖边索引
-    {
-        double x2 = pow(i - wind_size / 2, 2);
-        for(int j = 0; j < wind_size; j++) // 横边索引
-        {
-            double y2 = pow(j - wind_size / 2, 2);
-            double log_num = - (x2 + y2) / (denom_no_PI);
-            double num = exp(log_num);
-            weights[i * wind_size + j] = num / (denom_no_PI * PI);
-            sum1 += weights[i * wind_size + j];
-        }
-    }   
-    return sum1;
-}
+#include<vector>
 
 int main()
 {
     /* Hyper Parameters*/
     double K = 0.05;
     double Threshold = 1000;
-
+    int nms_padding = 7;
+    
     /* cv::Mat的索引和二维数组的索引在同一个坐标系下 */
-    cv::Mat lena_img = cv::imread("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_std.tif");
+    cv::Mat lena_img = cv::imread("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_std.png");
     cv::Mat gray_img;
     cv::cvtColor(lena_img, gray_img, cv::COLOR_BGR2GRAY);
     if(gray_img.empty())
@@ -42,124 +22,140 @@ int main()
         std::cout << "Cannot load image!!!" << std::endl;
         return -1;
     }
-    cv::imshow("Lena", lena_img);
-    cv::waitKey(0);
-    cv::imshow("Gray Lena", gray_img);
-    cv::waitKey(0);
 
     int lena_height = gray_img.rows; // 竖边长度
     int lena_width = gray_img.cols; // 横边长度
     int lena_channels = gray_img.channels(); // 读成灰度值，单通道，1
 
-    double *Ix = (double*)calloc(lena_height * lena_width, sizeof(double)); // 横边求导
-    double *Iy = (double*)calloc(lena_height * lena_width, sizeof(double)); // 竖边求导
+    cv::Mat Ix(lena_height, lena_width, CV_64F); // 横边求导
+    cv::Mat Iy(lena_height, lena_width, CV_64F); // 竖边求导
+    // 本算法用水平和竖直两个高斯核实现二维高斯滤波，以下为滤波时需要计算的值
+    cv::Mat Ix2(lena_height, lena_width, CV_64F);
+    cv::Mat Iy2(lena_height, lena_width, CV_64F); 
+    cv::Mat IxIy(lena_height, lena_width, CV_64F); 
 
-    for(int i = 1; i < lena_height - 1; i++) // 竖边索引
+    cv::Mat gray_img_padded;
+    cv::copyMakeBorder(gray_img, gray_img_padded, 1, 1, 1, 1, cv::BORDER_CONSTANT, 0);
+    for(int i = 0; i < lena_height; i++) // 竖边索引
     {
-        for(int j = 1; j < lena_width - 1; j++) // 横边索引
+        double * Ixptr = Ix.ptr<double>(i);
+        double * Iyptr = Iy.ptr<double>(i);
+        double * Ix2ptr = Ix2.ptr<double>(i);
+        double * Iy2ptr = Iy2.ptr<double>(i);
+        double * IxIyptr = IxIy.ptr<double>(i);
+        for(int j = 0; j < lena_width; j++) // 横边索引
         {
-            Ix[i * lena_width + j] = ((int)gray_img.at<uchar>(i, j + 1) - (int)gray_img.at<uchar>(i, j - 1)) / 2.0;
-            Iy[i * lena_width + j] = ((int)gray_img.at<uchar>(i + 1, j) - (int)gray_img.at<uchar>(i - 1, j)) / 2.0;
+            Ixptr[j] = (gray_img_padded.at<uchar>(i + 1, j + 2) - gray_img_padded.at<uchar>(i + 1, j)) / 2.0;
+            Iyptr[j] = (gray_img_padded.at<uchar>(i + 2, j + 1) - gray_img_padded.at<uchar>(i, j + 1)) / 2.0;
+            // 顺手把这些先算好，为了分布高斯滤波
+            Ix2ptr[j] = Ixptr[j] * Ixptr[j];
+            Iy2ptr[j] = Iyptr[j] * Iyptr[j];
+            IxIyptr[j] = Ixptr[j] * Iyptr[j];
         }
     }
 
-    double *kernel_weights;
     int wind_size;
+    double sigma;
     std::cout << "Define window size with one ODD int: ";
-    std::cin >> wind_size;
-    kernel_weights = (double*)malloc(wind_size * wind_size * sizeof(double));
-
-    char act_gf;
-    double weights_sum = 0;
-    std::cout << "Activate Gauss Filter?[Y/N]" << std::endl;
-    std::cin >> act_gf;
-    if(act_gf == 'Y' || act_gf == 'y')
+    std::cin >> wind_size;    
+    std::cout << "Please enter the sigma value: ";
+    std::cin >> sigma;
+    
+    std::cout << "Calculating Gaussian weights... " << std::endl;
+    std::vector<double> Kernel_Weights_1d(wind_size); // 一维高斯实现二维卷积，降低时间复杂度
+    double denom_no_PI = 2 * sigma * sigma;
+    double sum1 = 0;
+    for(int i = 0; i < wind_size; i++) 
     {
-        double sigma;
-        std::cout << "Please enter the sigma value: ";
-        std::cin >> sigma;
-        weights_sum = calcGaussianFilter(kernel_weights, wind_size, sigma);
+        double x2 = pow(i - wind_size / 2, 2);
+        double log_num = - x2 / denom_no_PI;
+        Kernel_Weights_1d[i] = exp(log_num);
+        sum1 += Kernel_Weights_1d[i];
     }   
-    else
+    for(int i = 0; i < wind_size; i++) 
     {
-        for(int i = 0; i < wind_size * wind_size; i++)
-        {
-            kernel_weights[i] = 1.0;
-            weights_sum = wind_size * wind_size;
-        }
-    }
-
-    std::cout << "The kernel weights are: " << std::endl;
-    for(int i = 0; i < wind_size; i++)
-    {
-        for(int j = 0; j < wind_size; j++)
-        {
-            std::cout << kernel_weights[i * wind_size + j] << ", ";
-        }
-        std::cout << std::endl;
-    }
+        Kernel_Weights_1d[i] /= sum1;
+    }   
 
     int half_wind_size = wind_size / 2;
-    double M11 = 0;
-    double M12 = 0;
-    double M22 = 0;
 
-    // double R_sum = 0;
-    double R_max = 0;
-    double R_min = 0;
-    double *RMap = (double *)calloc(lena_height * lena_width, sizeof(double)); 
-
-    for(int x = half_wind_size; x < lena_height - half_wind_size; x++) // 竖边索引
+    // 计算行权相加
+    cv::Mat Ix2Ext;
+    cv::copyMakeBorder(Ix2, Ix2Ext, 0, 0, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
+    cv::Mat Iy2Ext;
+    cv::copyMakeBorder(Iy2, Iy2Ext, 0, 0, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
+    cv::Mat IxIyExt;
+    cv::copyMakeBorder(IxIy, IxIyExt, 0, 0, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
+    
+    cv::Mat M11TempMap(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    cv::Mat M12TempMap(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    cv::Mat M22TempMap(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    
+    for(int x = 0; x < lena_height; x++) // 竖边索引
     {
-        for(int y = half_wind_size; y < lena_width - half_wind_size; y++) // 横边索引
+        double * M11ptr = M11TempMap.ptr<double>(x);
+        double * M12ptr = M12TempMap.ptr<double>(x);
+        double * M22ptr = M22TempMap.ptr<double>(x);
+        double * Ix2Eptr = Ix2Ext.ptr<double>(x);
+        double * IxIyEptr = IxIyExt.ptr<double>(x);
+        double * Iy2Eptr = Iy2Ext.ptr<double>(x);
+        for(int y = 0; y < lena_width; y++) // 横边索引
         {
-            /*  (x, y)表征当前的判断点， 
-                而(i, j)是窗口里遍历的点，用于计算M */
-            M11 = 0;
-            M12 = 0;
-            M22 = 0;
-            for(int i = -half_wind_size; i <= half_wind_size; i++) // 竖边索引
+            /*  (x, y)表征当前gray_img的判断点   */
+            for(int i = -half_wind_size; i <= half_wind_size; i++)
             {
-                for(int j = -half_wind_size; j <= half_wind_size; j++) // 横边索引
-                {
-                    int idx_w = (i + half_wind_size) * wind_size + j + half_wind_size;
-                    int idx_I = (x + i) * lena_width + y + j;
-                    M11 += kernel_weights[idx_w] * Ix[idx_I] * Ix[idx_I]; // / weights_sum;
-                    M12 += kernel_weights[idx_w] * Ix[idx_I] * Iy[idx_I]; // / weights_sum;
-                    M22 += kernel_weights[idx_w] * Iy[idx_I] * Iy[idx_I]; // / weights_sum;
-                }
+                M11ptr[y] += Kernel_Weights_1d[i + half_wind_size] * Ix2Eptr[y + half_wind_size + i];
+                M12ptr[y] += Kernel_Weights_1d[i + half_wind_size] * IxIyEptr[y + half_wind_size + i];
+                M22ptr[y] += Kernel_Weights_1d[i + half_wind_size] * Iy2Eptr[y + half_wind_size + i];
             }
-            double R = M11 * M22 - M12 * M12 - K * pow((M11 + M22), 2);
-            RMap[x * lena_width + y] = R;
-            
-            // R_sum += R;
-            R_max = (R_max - R < 1e-6) ? R : R_max;
-            R_min = (R_min - R > 1e-6) ? R : R_min;
         }
     }
 
-    uchar *RMapUchar = (uchar *)calloc(lena_height * lena_width, sizeof(uchar)); 
-    for(int i = 1; i < lena_height - 1; i++) // 竖边索引
+    // 计算列权相加
+    cv::Mat M11TempMapExt;
+    cv::copyMakeBorder(M11TempMap, M11TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_CONSTANT, 0);
+    cv::Mat M12TempMapExt;
+    cv::copyMakeBorder(M12TempMap, M12TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_CONSTANT, 0);
+    cv::Mat M22TempMapExt;
+    cv::copyMakeBorder(M22TempMap, M22TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_CONSTANT, 0);
+    
+    cv::Mat M11Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    cv::Mat M12Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    cv::Mat M22Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    
+    for(int x = 0; x < lena_height; x++) // 竖边索引
     {
-        for(int j = 1; j < lena_width - 1; j++) // 横边索引
+        double * M11ptr = M11Map.ptr<double>(x);
+        double * M12ptr = M12Map.ptr<double>(x);
+        double * M22ptr = M22Map.ptr<double>(x);
+        for(int y = 0; y < lena_width; y++) // 横边索引
         {
-            RMapUchar[i * lena_width + j] = static_cast<uchar>((RMap[i * lena_width + j] - R_min) / (R_max - R_min) * 255);
+            /*  (x, y)表征当前gray_img的判断点   */
+            for(int i = -half_wind_size; i <= half_wind_size; i++)
+            {
+                M11ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M11TempMapExt.at<double>(x + half_wind_size + i, y);
+                M12ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M12TempMapExt.at<double>(x + half_wind_size + i, y);
+                M22ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M22TempMapExt.at<double>(x + half_wind_size + i, y);
+            }
         }
     }
-    cv::Mat RMap_img(lena_height, lena_width, CV_8UC1, RMapUchar);
-    cv::Mat RMap_img_heat(lena_height, lena_width, CV_8UC1);
-    cv::applyColorMap(RMap_img, RMap_img_heat, cv::COLORMAP_JET);
-    cv::imshow("Lena Heatmap", RMap_img_heat);
-    cv::waitKey(0);
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_heatmap.jpg", RMap_img_heat);
 
-    Threshold = 0.01 * R_max;
+    // 计算响应函数R
+    cv::Mat RMap(lena_height, lena_width, CV_64F, cv::Scalar(0));
+    cv::Mat M1122Map;
+    cv::multiply(M11Map, M22Map, M1122Map);
+    cv::Mat M1212Map;
+    cv::multiply(M12Map, M12Map, M1212Map);
+    cv::Mat M11M12Map;
+    cv::multiply(M11Map + M22Map, M11Map + M22Map, M11M12Map);
+    RMap = M1122Map - M1212Map - K * M11M12Map;
+
     cv::Mat lena_img2 = lena_img.clone();
     for(int i = 1; i < lena_height - 1; i++) // 竖边索引
     {
         for(int j = 1; j < lena_width - 1; j++) // 横边索引
         {
-            if(RMap[i * lena_width + j] - Threshold > 1e-6)
+            if(RMap.at<double>(i, j) - Threshold > 1e-6)
             {
                 cv::circle(lena_img2, cv::Point(j, i), 5, cv::Scalar(0, 0, 255), 2);
             }
@@ -169,13 +165,11 @@ int main()
     cv::waitKey(0);
     cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_circled.jpg", lena_img2);
     
-    Threshold = 0.01 * R_max;
-    int nms_padding = 11;
     for(int i = nms_padding; i < lena_height - nms_padding; i++) // 竖边索引
     {
         for(int j = nms_padding; j < lena_width - nms_padding; j++) // 横边索引
         {
-            if(RMap[i * lena_width + j] - Threshold < 1e-6)
+            if(RMap.at<double>(i, j) - Threshold < 1e-6)
             {
                 continue;
             }
@@ -188,7 +182,7 @@ int main()
                     {
                         continue;
                     }
-                    if(RMap[(i + dx) * lena_width + j + dy] - RMap[i * lena_width + j]> 1e-6)
+                    if(RMap.at<double>(i + dx, j + dy) - RMap.at<double>(i, j) > 1e-6)
                     {
                         is_max = false;
                         break;
@@ -208,12 +202,6 @@ int main()
     cv::imshow("Lena Edge Points", lena_img);
     cv::waitKey(0);
     cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_circled_nms.jpg", lena_img);
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray.jpg", gray_img);
 
-    free(RMap);
-    free(RMapUchar);
-    free(Ix);
-    free(Iy);
-    free(kernel_weights);
     return 0;
 }
