@@ -26,8 +26,9 @@ int main()
     int lena_width = gray_img.cols; // 横边长度
     int lena_channels = gray_img.channels(); // 读成灰度值，单通道，1
 
-    cv::Mat Ix(lena_height, lena_width, CV_64F); // 横边求导
-    cv::Mat Iy(lena_height, lena_width, CV_64F); // 竖边求导
+    // 没必要储存Ix和Iy
+    // cv::Mat Ix(lena_height, lena_width, CV_64F); // 横边求导
+    // cv::Mat Iy(lena_height, lena_width, CV_64F); // 竖边求导
     // 本算法用水平和竖直两个高斯核实现二维高斯滤波，以下为滤波时需要计算的值
     cv::Mat Ix2(lena_height, lena_width, CV_64F);
     cv::Mat Iy2(lena_height, lena_width, CV_64F); 
@@ -37,19 +38,22 @@ int main()
     cv::copyMakeBorder(gray_img, gray_img_padded, 1, 1, 1, 1, cv::BORDER_REPLICATE);
     for(int i = 0; i < lena_height; i++) // 竖边索引
     {
-        double * Ixptr = Ix.ptr<double>(i);
-        double * Iyptr = Iy.ptr<double>(i);
+        // double * Ixptr = Ix.ptr<double>(i);
+        // double * Iyptr = Iy.ptr<double>(i);
         double * Ix2ptr = Ix2.ptr<double>(i);
         double * Iy2ptr = Iy2.ptr<double>(i);
         double * IxIyptr = IxIy.ptr<double>(i);
+        uchar * Giptr = gray_img_padded.ptr<uchar>(i);
+        uchar * Gi1ptr = gray_img_padded.ptr<uchar>(i + 1);
+        uchar * Gi2ptr = gray_img_padded.ptr<uchar>(i + 2);
         for(int j = 0; j < lena_width; j++) // 横边索引
         {
-            Ixptr[j] = (gray_img_padded.at<uchar>(i + 1, j + 2) - gray_img_padded.at<uchar>(i + 1, j)) / 2.0;
-            Iyptr[j] = (gray_img_padded.at<uchar>(i + 2, j + 1) - gray_img_padded.at<uchar>(i, j + 1)) / 2.0;
+            double Ixptr_j = (Gi1ptr[j + 2] - Gi1ptr[j]) / 2.0;
+            double Iyptr_j = (Gi2ptr[j + 1] - Giptr[j + 1]) / 2.0;
             // 顺手把这些先算好，为了分布高斯滤波
-            Ix2ptr[j] = Ixptr[j] * Ixptr[j];
-            Iy2ptr[j] = Iyptr[j] * Iyptr[j];
-            IxIyptr[j] = Ixptr[j] * Iyptr[j];
+            Ix2ptr[j] = Ixptr_j * Ixptr_j;
+            Iy2ptr[j] = Iyptr_j * Iyptr_j;
+            IxIyptr[j] = Ixptr_j * Iyptr_j;
         }
     }
 
@@ -118,39 +122,35 @@ int main()
     cv::Mat M22TempMapExt;
     cv::copyMakeBorder(M22TempMap, M22TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_REPLICATE);
     
-    cv::Mat M11Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
-    cv::Mat M12Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
-    cv::Mat M22Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
-    
+    // cv::Mat M11Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    // cv::Mat M12Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    // cv::Mat M22Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
+    cv::Mat RMap(lena_height, lena_width, CV_64F, cv::Scalar(0));
+
     for(int x = 0; x < lena_height; x++) // 竖边索引
     {
-        double * M11ptr = M11Map.ptr<double>(x);
-        double * M12ptr = M12Map.ptr<double>(x);
-        double * M22ptr = M22Map.ptr<double>(x);
+        // double * M11ptr = M11Map.ptr<double>(x);
+        // double * M12ptr = M12Map.ptr<double>(x);
+        // double * M22ptr = M22Map.ptr<double>(x);
+        double * Rptr = RMap.ptr<double>(x);
         for(int y = 0; y < lena_width; y++) // 横边索引
         {
             /*  (x, y)表征当前gray_img的判断点   */
+            double M11ptr_y = 0;
+            double M12ptr_y = 0;
+            double M22ptr_y = 0;
             for(int i = -half_wind_size; i <= half_wind_size; i++)
             {
                 double * M11TempMapExtptr = M11TempMapExt.ptr<double>(x + half_wind_size + i);
                 double * M12TempMapExtptr = M12TempMapExt.ptr<double>(x + half_wind_size + i);
                 double * M22TempMapExtptr = M22TempMapExt.ptr<double>(x + half_wind_size + i);
-                M11ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M11TempMapExtptr[y];
-                M12ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M12TempMapExtptr[y];
-                M22ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M22TempMapExtptr[y];
+                M11ptr_y += Kernel_Weights_1d[i + half_wind_size] * M11TempMapExtptr[y];
+                M12ptr_y += Kernel_Weights_1d[i + half_wind_size] * M12TempMapExtptr[y];
+                M22ptr_y += Kernel_Weights_1d[i + half_wind_size] * M22TempMapExtptr[y];
             }
+            Rptr[y] = M11ptr_y * M22ptr_y - M12ptr_y * M12ptr_y - K * (M11ptr_y + M22ptr_y) * (M11ptr_y + M22ptr_y);
         }
     }
-
-    // 计算响应函数R
-    cv::Mat RMap(lena_height, lena_width, CV_64F, cv::Scalar(0));
-    cv::Mat M1122Map;
-    cv::multiply(M11Map, M22Map, M1122Map);
-    cv::Mat M1212Map;
-    cv::multiply(M12Map, M12Map, M1212Map);
-    cv::Mat M11M12Map;
-    cv::multiply(M11Map + M22Map, M11Map + M22Map, M11M12Map);
-    RMap = M1122Map - M1212Map - K * M11M12Map;
 
     double Rmin;
     double Rmax;
