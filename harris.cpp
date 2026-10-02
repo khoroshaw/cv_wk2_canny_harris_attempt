@@ -10,7 +10,6 @@ int main()
 {
     /* Hyper Parameters*/
     double K = 0.05;
-    double Threshold = 1000;
     int nms_padding = 7;
     
     /* cv::Mat的索引和二维数组的索引在同一个坐标系下 */
@@ -35,7 +34,7 @@ int main()
     cv::Mat IxIy(lena_height, lena_width, CV_64F); 
 
     cv::Mat gray_img_padded;
-    cv::copyMakeBorder(gray_img, gray_img_padded, 1, 1, 1, 1, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(gray_img, gray_img_padded, 1, 1, 1, 1, cv::BORDER_REPLICATE);
     for(int i = 0; i < lena_height; i++) // 竖边索引
     {
         double * Ixptr = Ix.ptr<double>(i);
@@ -81,11 +80,11 @@ int main()
 
     // 计算行权相加
     cv::Mat Ix2Ext;
-    cv::copyMakeBorder(Ix2, Ix2Ext, 0, 0, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(Ix2, Ix2Ext, 0, 0, half_wind_size, half_wind_size, cv::BORDER_REPLICATE);
     cv::Mat Iy2Ext;
-    cv::copyMakeBorder(Iy2, Iy2Ext, 0, 0, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(Iy2, Iy2Ext, 0, 0, half_wind_size, half_wind_size, cv::BORDER_REPLICATE);
     cv::Mat IxIyExt;
-    cv::copyMakeBorder(IxIy, IxIyExt, 0, 0, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(IxIy, IxIyExt, 0, 0, half_wind_size, half_wind_size, cv::BORDER_REPLICATE);
     
     cv::Mat M11TempMap(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
     cv::Mat M12TempMap(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
@@ -113,11 +112,11 @@ int main()
 
     // 计算列权相加
     cv::Mat M11TempMapExt;
-    cv::copyMakeBorder(M11TempMap, M11TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(M11TempMap, M11TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_REPLICATE);
     cv::Mat M12TempMapExt;
-    cv::copyMakeBorder(M12TempMap, M12TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(M12TempMap, M12TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_REPLICATE);
     cv::Mat M22TempMapExt;
-    cv::copyMakeBorder(M22TempMap, M22TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_CONSTANT, 0);
+    cv::copyMakeBorder(M22TempMap, M22TempMapExt, half_wind_size, half_wind_size, 0, 0, cv::BORDER_REPLICATE);
     
     cv::Mat M11Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
     cv::Mat M12Map(lena_height, lena_width, CV_64F, cv::Scalar(0)); 
@@ -133,9 +132,12 @@ int main()
             /*  (x, y)表征当前gray_img的判断点   */
             for(int i = -half_wind_size; i <= half_wind_size; i++)
             {
-                M11ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M11TempMapExt.at<double>(x + half_wind_size + i, y);
-                M12ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M12TempMapExt.at<double>(x + half_wind_size + i, y);
-                M22ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M22TempMapExt.at<double>(x + half_wind_size + i, y);
+                double * M11TempMapExtptr = M11TempMapExt.ptr<double>(x + half_wind_size + i);
+                double * M12TempMapExtptr = M12TempMapExt.ptr<double>(x + half_wind_size + i);
+                double * M22TempMapExtptr = M22TempMapExt.ptr<double>(x + half_wind_size + i);
+                M11ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M11TempMapExtptr[y];
+                M12ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M12TempMapExtptr[y];
+                M22ptr[y] += Kernel_Weights_1d[i + half_wind_size] * M22TempMapExtptr[y];
             }
         }
     }
@@ -150,12 +152,18 @@ int main()
     cv::multiply(M11Map + M22Map, M11Map + M22Map, M11M12Map);
     RMap = M1122Map - M1212Map - K * M11M12Map;
 
+    double Rmin;
+    double Rmax;
+    cv::Mat RMapflatten = RMap.reshape(0, 1);
+    cv::minMaxLoc(RMapflatten, &Rmin, &Rmax);
+    double Threshold = 0.01 * Rmax;
     cv::Mat lena_img2 = lena_img.clone();
     for(int i = 1; i < lena_height - 1; i++) // 竖边索引
     {
+        double * RMptr = RMap.ptr<double>(i);
         for(int j = 1; j < lena_width - 1; j++) // 横边索引
         {
-            if(RMap.at<double>(i, j) - Threshold > 1e-6)
+            if(RMptr[j] - Threshold > 1e-6)
             {
                 cv::circle(lena_img2, cv::Point(j, i), 5, cv::Scalar(0, 0, 255), 2);
             }
@@ -167,22 +175,25 @@ int main()
     
     for(int i = nms_padding; i < lena_height - nms_padding; i++) // 竖边索引
     {
+        double * RMptr = RMap.ptr<double>(i);
         for(int j = nms_padding; j < lena_width - nms_padding; j++) // 横边索引
         {
-            if(RMap.at<double>(i, j) - Threshold < 1e-6)
+            if(RMptr[j] - Threshold < 1e-6)
             {
                 continue;
             }
             bool is_max = true;
             for(int dx = -nms_padding; dx <= nms_padding; dx++)
             {
+                double * RMdptr = RMap.ptr<double>(i + dx);
                 for(int dy = -nms_padding; dy <= nms_padding; dy++)
                 {
                     if(dx == 0 && dy == 0)
                     {
                         continue;
                     }
-                    if(RMap.at<double>(i + dx, j + dy) - RMap.at<double>(i, j) > 1e-6)
+                    
+                    if(RMdptr[j + dy] - RMptr[j] > 1e-6)
                     {
                         is_max = false;
                         break;
