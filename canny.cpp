@@ -4,32 +4,13 @@
 #include<opencv2/imgproc.hpp>
 #include<opencv2/imgcodecs.hpp>
 #include<opencv2/highgui.hpp>
-
-double calcGaussianFilter(double *weights, int wind_size, double sigma)
-{
-    std::cout << "Calculating Gaussian weights... " << std::endl;
-
-    double denom_no_PI = 2 * sigma * sigma;
-    double sum1 = 0;
-    for(int i = 0; i < wind_size; i++) // 竖边索引
-    {
-        double x2 = pow(i - wind_size / 2, 2);
-        for(int j = 0; j < wind_size; j++) // 横边索引
-        {
-            double y2 = pow(j - wind_size / 2, 2);
-            double log_num = - (x2 + y2) / (denom_no_PI);
-            double num = exp(log_num);
-            weights[i * wind_size + j] = num / (denom_no_PI * M_PI);
-            sum1 += weights[i * wind_size + j];
-        }
-    }   
-    return sum1;
-}
+#include<vector>
+#include<queue>
 
 int main()
 {
     /* cv::Mat的索引和二维数组的索引在同一个坐标系下 */
-    cv::Mat lena_img = cv::imread("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_std.tif");
+    cv::Mat lena_img = cv::imread("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_std.png");
     cv::Mat gray_img;
     cv::cvtColor(lena_img, gray_img, cv::COLOR_BGR2GRAY);
     if(gray_img.empty())
@@ -37,56 +18,93 @@ int main()
         std::cout << "Cannot load image!!!" << std::endl;
         return -1;
     }
-    cv::imshow("Lena", lena_img);
-    cv::waitKey(0);
-    cv::imshow("Gray Lena", gray_img);
-    cv::waitKey(0);
 
     int lena_height = gray_img.rows; // 竖边长度
     int lena_width = gray_img.cols; // 横边长度
     int lena_channels = gray_img.channels(); // 读成灰度值，单通道，1
 
-    double *kernel_weights;
     int wind_size;
     std::cout << "Define window size with one ODD int: ";
     std::cin >> wind_size;
-    kernel_weights = (double*)malloc(wind_size * wind_size * sizeof(double)); 
-    double weights_sum = 0;
+    int half_wind_size = wind_size / 2;
     double sigma;
     std::cout << "Please enter the sigma value: ";
     std::cin >> sigma;
-    weights_sum = calcGaussianFilter(kernel_weights, wind_size, sigma);
-    std::cout << "The kernel weights are: " << std::endl;
+    std::cout << "Calculating Gaussian weights... " << std::endl;
+    std::vector<double> GF_Weights(wind_size);
+    double denom_no_PI = 2 * sigma * sigma;
+    double sum1 = 0;
+    for(int i = 0; i < wind_size; i++) 
+    {
+        double x2 = (i - half_wind_size) * (i - half_wind_size);
+        double log_num = - x2 / (denom_no_PI);
+        double num = exp(log_num);
+        GF_Weights[i] = num;
+        sum1 += GF_Weights[i];
+    }   
     for(int i = 0; i < wind_size; i++)
     {
-        for(int j = 0; j < wind_size; j++)
-        {
-            std::cout << kernel_weights[i * wind_size + j] << ", ";
-        }
-        std::cout << std::endl;
+        GF_Weights[i] /= sum1;
     }
 
-    cv::Mat gray_img_padded;
-    int half_wind_size = wind_size / 2;
-    cv::copyMakeBorder(gray_img, gray_img_padded, half_wind_size, half_wind_size, half_wind_size, half_wind_size, cv::BORDER_CONSTANT, 0);
-    int lena_height_padded = gray_img_padded.rows; // 竖边长度
-    int lena_width_padded = gray_img_padded.cols; // 横边长度
-    for(int i = half_wind_size; i < lena_height_padded - half_wind_size; i++) // 竖边索引
+    // 二维高斯滤波
+    cv::Mat TempMap(wind_size, lena_width, CV_64F, cv::Scalar(0));
+    cv::Mat GaussMap(lena_height, lena_width, CV_64F, cv::Scalar(0));
+    for(int i = 0; i < lena_height; i++)
     {
-        for(int j = half_wind_size; j < lena_width_padded - half_wind_size; j++) // 横边索引
+        int idx_swin = i % wind_size; // 这么写是没有问题的，unlike ChatGPT suggestions
+        uchar * GImgPtr = gray_img.ptr<uchar>(i);
+        double * TMapPtr = TempMap.ptr<double>(idx_swin);
+        // 行高斯计算，建临时表
+        for(int j = 0; j < lena_width; j++)
         {
-            cv::Mat mat_temp = gray_img_padded(cv::Rect(j - half_wind_size, i - half_wind_size, wind_size, wind_size));
-            double filtered_val = 0;
-            for(int k = 0; k < wind_size * wind_size; k++)
+            TMapPtr[j] = 0; // 清除上一次的临时表数据
+            for(int k = -half_wind_size; k <= half_wind_size; k++)
             {
-                filtered_val += kernel_weights[k] * static_cast<double>(mat_temp.at<uchar>(k / wind_size, k % wind_size));
+                int idx_calc_row = std::max(0, std::min(lena_width - 1, j + k));
+                TMapPtr[j] += GF_Weights[k + half_wind_size] * GImgPtr[idx_calc_row];
             }
-            gray_img.at<uchar>(i - half_wind_size, j - half_wind_size) = static_cast<uchar>(filtered_val);
+        }
+        // 列高斯计算，使用临时表
+        if(i >= half_wind_size) // 需要未来的half window才可以开始计算
+        {
+            int idx_calc_col = i - half_wind_size; // 永远在计算half window之前的高斯
+            double * GMapPtr = GaussMap.ptr<double>(idx_calc_col);
+            for(int j = -half_wind_size; j <= half_wind_size; j++) // 换个思路，这次把列加权计算放外环
+            {
+                // idx_calc_col为本次列计算的行，idx_real为核计算涉及的行
+                int idx_real = std::min(lena_height - 1, std::max(0, idx_calc_col + j)); 
+                int idx_wind_col = idx_real % wind_size;
+                double * TMapPtr = TempMap.ptr<double>(idx_wind_col); // 如此可以多次重复地用一个TMapPtr
+                for(int k = 0; k < lena_width; k++)
+                {
+                    GMapPtr[k] += GF_Weights[half_wind_size + j] * TMapPtr[k];
+                }
+            }
         }
     }
-    cv::imshow("Gray Lena Gaussian Filtered", gray_img);
-    cv::waitKey(0);
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_gaufilt.jpg", gray_img);
+    // 补最后的half window的高斯计算，该用的临时表其实已经建立好了
+    for(int i = 0; i < half_wind_size; i++)
+    {
+        // 列高斯计算，使用临时表
+        int idx_calc_col = lena_height - half_wind_size + i; // 待计算的行
+        double * GMapPtr = GaussMap.ptr<double>(idx_calc_col);
+        for(int j = -half_wind_size; j <= half_wind_size; j++)
+        {
+            int idx_real = std::min(lena_height - 1, std::max(0, idx_calc_col + j));
+            int idx_wind_col = idx_real % wind_size; // 临时表对应的行
+            double * TMapPtr = TempMap.ptr<double>(idx_wind_col);
+            for(int k = 0; k < lena_width; k++)
+            {
+                GMapPtr[k] += GF_Weights[half_wind_size + j] * TMapPtr[k];
+            }
+        }
+    }
+
+    // cv::imshow("Gray Lena GFed", GaussMap);
+    // cv::waitKey(0);
+    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gfed.jpg", GaussMap);
+    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray.jpg", gray_img);
 
     double *Dx = (double*)malloc(lena_height * lena_width * sizeof(double)); // 横边求导
     double *Dy = (double*)malloc(lena_height * lena_width * sizeof(double)); // 竖边求导
@@ -244,13 +262,5 @@ int main()
     cv::waitKey(0);
     cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_grad_nms_merged.jpg", lena_nms_grad_high_merged);
 
-    free(Dx);
-    free(Dy);
-    free(M);
-    free(Theta);
-    free(NMSMap);
-    free(NMSMapHigh);
-    free(NMSMapLow);
-    free(kernel_weights);
     return 0;
 }
