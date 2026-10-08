@@ -52,6 +52,7 @@ int main()
     cv::Mat GaussMap(lena_height, lena_width, CV_64F, cv::Scalar(0));
 
     // Gemini建议的Lambda表达式，由于两块代码是一样的，因此可以让代码更美观
+    // 此处实现的是高斯滤波的列计算
     auto calc_col_gauss = [&](int row)
     {
         int idx_calc_col = row; // 永远在计算half window之前的高斯，待计算的行
@@ -97,166 +98,166 @@ int main()
         calc_col_gauss(lena_height - half_wind_size + i);
     }
 
-    cv::imshow("Gray Lena GFed", GaussMap);
-    cv::waitKey(0);
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gfed.jpg", GaussMap);
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray.jpg", gray_img);
+    // 计算梯度幅值和方向，方向归为4类：0, 45, 90, 135
+    // 有意思的是，没有必要计算准确的角度值
+    cv::Mat Magnitude(lena_height, lena_width, CV_64F);
+    cv::Mat Theta(lena_height, lena_width, CV_8U);
+    for(int i = 0; i < lena_height; i++)
+    {
+        uchar * GImgPtr0 = gray_img.ptr<uchar>(i);
+        uchar * GImgPtr1 = gray_img.ptr<uchar>((i == lena_height - 1) ? lena_height - 1 : i + 1);
+        double * MagPtr = Magnitude.ptr<double>(i);
+        uchar * ThePtr = Theta.ptr<uchar>(i);
+        for(int j = 0; j < lena_width; j++)
+        {
+            int j1 = (j == lena_width - 1) ? lena_width - 1 : j + 1;
+            // 右为正方向，两次右减左
+            double Dx = (GImgPtr0[j1] - GImgPtr0[j] + GImgPtr1[j1] - GImgPtr1[j]) / 2.0;
+            // 下为正方向，两次下减上，这里和老师的ppt有点出入
+            // 实际上应该用Sobel算子，不过无所谓
+            double Dy = (GImgPtr1[j] - GImgPtr0[j] + GImgPtr1[j1] - GImgPtr0[j1]) / 2.0;
+            MagPtr[j] = sqrt(Dx * Dx + Dy * Dy);
+            // 思路：如果abs(Dx)很小，那么是90度，如果abs(Dy)很小，那么是0度；
+            // 如果Dx和Dy的模值差不多，同号则为45度，异号则为135度；
+            // 如此可以避免多次调用atan2函数
+            // 现在的问题是如何将这个界定写入代码之中
+            // 而且也别忘了22.5度这种神奇的情况应作何判断
+            double absDx = fabs(Dx);
+            double absDy = fabs(Dy);
+            if(absDx - absDy > 0.586 * absDx) // Dy相对于Dx来说很小，tan(22.5°)≈0.414
+            {
+                ThePtr[j] = 0;
+            }
+            else if(absDy - absDx > 0.586 * absDy)
+            {
+                ThePtr[j] = 90;
+            }
+            else if(Dx * Dy > 1e-6)
+            {
+                ThePtr[j] = 45;
+            }
+            else
+            {
+                ThePtr[j] = 135;
+            }
+        }
+    }
 
-    // double *Dx = (double*)malloc(lena_height * lena_width * sizeof(double)); // 横边求导
-    // double *Dy = (double*)malloc(lena_height * lena_width * sizeof(double)); // 竖边求导
-    // uchar *M = (uchar*)malloc(lena_height * lena_width * sizeof(uchar));
-    // int *Theta = (int*)malloc(lena_height * lena_width * sizeof(int));
-    // double m_temp = 0;
-    // double M_max = 0;
-    // double M_min = 0;
-    // double theta_temp = 0;
-    // double theta_0 = 0;
-    // double theta_45 = 0;
-    // double theta_90 = 0;
-    // double theta_135 = 0;
-    // double theta_dir = 0;
-    // cv::Mat gray_img_padded2;
-    // cv::copyMakeBorder(gray_img, gray_img_padded2, 0, 1, 0, 1, cv::BORDER_CONSTANT, 0);
-    // for(int i = 0; i < lena_height; i++) // 竖边索引
-    // {
-    //     for(int j = 0; j < lena_width; j++) // 横边索引
-    //     {
-    //         Dx[i * lena_width + j] = static_cast<double>(gray_img_padded2.at<uchar>(i, j + 1) - gray_img_padded2.at<uchar>(i, j) + gray_img_padded2.at<uchar>(i + 1, j + 1) - gray_img_padded2.at<uchar>(i + 1, j)) / 2.0;
-    //         Dy[i * lena_width + j] = static_cast<double>(gray_img_padded2.at<uchar>(i, j) - gray_img_padded2.at<uchar>(i + 1, j) + gray_img_padded2.at<uchar>(i, j + 1) - gray_img_padded2.at<uchar>(i + 1, j + 1)) / 2.0;
-    //         m_temp = sqrt(pow(Dx[i * lena_width + j], 2) + pow(Dy[i * lena_width + j], 2));
-    //         M_max = fmax(m_temp, M_max);
-    //         M_min = fmin(m_temp, M_min);
-    //         theta_temp = atan2(Dy[i * lena_width + j], Dx[i * lena_width + j]) / M_PI * 180.0;
-    //         theta_0 = (theta_temp > 1e-6) ? fmin(fabs(theta_0), fabs(theta_0 - 180.0)) : fmin(fabs(theta_0), fabs(theta_0 + 180.0));
-    //         theta_45 = (theta_temp > 1e-6) ? fabs(theta_temp - 45.0) : fabs(theta_temp + 135.0);
-    //         theta_90 = (theta_temp > 1e-6) ? fabs(theta_temp - 90.0) : fabs(theta_temp + 90.0);
-    //         theta_135 = (theta_temp > 1e-6) ? fabs(theta_temp - 135.0) : fabs(theta_temp + 45.0);
-    //         theta_dir = fmin(theta_0, fmin(theta_45, fmin(theta_90, theta_135)));
-    //         if(fabs(theta_dir - theta_0) < 1e-6)
-    //             Theta[i * lena_width + j] = 0;
-    //         else if(fabs(theta_dir - theta_45) < 1e-6)
-    //             Theta[i * lena_width + j] = 45;
-    //         else if(fabs(theta_dir - theta_90) < 1e-6)
-    //             Theta[i * lena_width + j] = 90;
-    //         else
-    //             Theta[i * lena_width + j] = 135;
-    //     }
-    // }
-    // for(int i = 0; i < lena_height; i++) // 竖边索引
-    // {
-    //     for(int j = 0; j < lena_width; j++) // 横边索引
-    //     {
-    //         m_temp = sqrt(pow(Dx[i * lena_width + j], 2) + pow(Dy[i * lena_width + j], 2));
-    //         M[i * lena_width + j] = static_cast<uchar>((m_temp - M_min) / (M_max - M_min) * 255.0);
-    //     }
-    // }           
-    // cv::Mat lena_grad(lena_height, lena_width, CV_8UC1, M);
-    // cv::imshow("Gray Lena Gradient Amplitude", lena_grad);
-    // cv::waitKey(0);
-    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_grad.jpg", lena_grad);
+    // 计算NMS
+    // ChatGPT的意思是，只要看前后两个方向的点即可
+    // 写个lambda省点空间
+    // 这里，或者是上一步，过分简化了；所有网上的Canny算法帖子都有插值一说，我这里没有！！
+    // 这可能是导致我的结果和老师的不一样的原因
+    for(int i = 0; i < lena_height; i++)
+    {
+        uchar * ThetPtr = Theta.ptr<uchar>(i);
+        double * MagniPtr = Magnitude.ptr<double>(i);
+        for(int j = 0; j < lena_width; j++)
+        {
+            int dx1, dx2, dy1, dy2;
+            switch (ThetPtr[j])
+            {
+            case 0:
+                dy1 = std::max(0, j - 1);
+                dy2 = std::min(lena_width - 1, j + 1);
+                dx1 = i;
+                dx2 = i;
+                break;
+            case 45:
+                dy1 = std::min(lena_width - 1, j + 1);
+                dy2 = std::max(0, j - 1);
+                dx1 = std::max(0, i - 1);
+                dx2 = std::min(lena_height - 1, i + 1);
+                break;
+            case 90:
+                dx1 = std::max(0, i - 1);
+                dx2 = std::min(lena_height - 1, i + 1);
+                dy1 = j;
+                dy2 = j;
+                break;
+            case 135:
+                dy1 = std::max(0, j - 1);
+                dy2 = std::min(lena_width - 1, j + 1);
+                dx1 = std::max(0, i - 1);
+                dx2 = std::min(lena_height - 1, i + 1);
+                break;
+            }
+            double prev = Magnitude.at<double>(dx1, dy1);
+            double post = Magnitude.at<double>(dx2, dy2);
+            double point = Magnitude.at<double>(i, j);
+            if(point < prev || point < post)
+            {
+                MagniPtr[j] = 0;
+            }
+        }
+    }
 
-    // int idx_for_x = 0; // 竖边索引
-    // int idx_for_y = 0; // 横边索引
-    // int idx_back_x = 0; // 竖边索引
-    // int idx_back_y = 0; // 横边索引
-    // uchar *NMSMap = (uchar*)calloc(lena_height * lena_width, sizeof(uchar));
-    // for(int i = 1; i < lena_height - 1; i++) // 竖边索引
-    // {
-    //     for(int j = 1; j < lena_width - 1; j++) // 横边索引
-    //     {
-    //         if(Theta[i * lena_width + j] == 0)
-    //         {
-    //             idx_for_x = i;
-    //             idx_back_x = i;
-    //             idx_for_y = j + 1;
-    //             idx_back_y = j - 1;
-    //         }
-    //         else if(Theta[i * lena_width + j] == 45)
-    //         {
-    //             idx_for_x = i - 1;
-    //             idx_back_x = i + 1;
-    //             idx_for_y = j + 1;
-    //             idx_back_y = j - 1;
-    //         }
-    //         else if(Theta[i * lena_width + j] == 90)
-    //         {
-    //             idx_for_x = i + 1;
-    //             idx_back_x = i - 1;
-    //             idx_for_y = j;
-    //             idx_back_y = j;
-    //         }
-    //         else
-    //         {
-    //             idx_for_x = i + 1;
-    //             idx_back_x = i - 1;
-    //             idx_for_y = j + 1;
-    //             idx_back_y = j - 1;
-    //         }
-    //         NMSMap[i * lena_width + j] = ((M[i * lena_width + j] > M[idx_back_x * lena_width + idx_back_y]) && (M[i * lena_width + j] > M[idx_for_x * lena_width + idx_for_y])) ? M[i * lena_width + j] : 0;
-    //     }
-    // }
-    // cv::Mat lena_nms_grad(lena_height, lena_width, CV_8UC1, NMSMap);
-    // cv::imshow("Gray Lena Gradient Amplitude NMSed", lena_nms_grad);
-    // cv::waitKey(0);
-    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_grad_nms.jpg", lena_nms_grad);
+    // 二值化与最终的边缘展示
+    // ChatGPT建议把这个任务作为一个深度优先或广度优先的小任务
+    // 思路：遍历所有的strong点，把周边的weak点全部变成strong点，再把新strong点遍历一遍，迭代
+    // 问题是：如此这般，会不会只是把weak点全部变成strong点？
+    // 孤立的weak点应该会在这个流程中被滤掉
+    // 我需要两个容器，一个放旧strong点，一个放新strong点
+    // 每次迭代中，旧strong点拿一个扔一个，迭代结束后新strong点全部填入旧strong点
+    // 扔掉的点保留在cv::Mat中
+    double MagMin;
+    double MagMax;
+    cv::Mat MagFlatten = Magnitude.reshape(0, 1);
+    cv::minMaxLoc(MagFlatten, &MagMin, &MagMax);
+    double HighThresh = 0.1 * MagMax; // not perfect, but it have to do now
+    double LowThresh = 0.4 * HighThresh;
 
-    // int thrHigh = 10;
-    // int thrLow = thrHigh * 0.4;
-    // uchar *NMSMapHigh = (uchar*)calloc(lena_height * lena_width, sizeof(uchar));
-    // uchar *NMSMapLow = (uchar*)calloc(lena_height * lena_width, sizeof(uchar));
-    // for(int i = 1; i < lena_height - 1; i++) // 竖边索引
-    // {
-    //     for(int j = 1; j < lena_width - 1; j++) // 横边索引
-    //     {
-    //         NMSMapHigh[i * lena_width + j] = (NMSMap[i * lena_width + j] > thrHigh) ? 255 : 0;
-    //         NMSMapLow[i * lena_width + j] = (NMSMap[i * lena_width + j] > thrLow) ? 255 : 0;
-    //     }
-    // }
-    // cv::Mat lena_nms_grad_high(lena_height, lena_width, CV_8UC1, NMSMapHigh);
-    // cv::imshow("Gray Lena Gradient Amplitude NMSed High Threshold", lena_nms_grad_high);
-    // cv::waitKey(0);
-    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_grad_nms_high.jpg", lena_nms_grad_high);
-    // cv::Mat lena_nms_grad_low(lena_height, lena_width, CV_8UC1, NMSMapLow);
-    // cv::imshow("Gray Lena Gradient Amplitude NMSed High Threshold", lena_nms_grad_low);
-    // cv::waitKey(0);
-    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_grad_nms_low.jpg", lena_nms_grad_low);
+    cv::Mat HighMap(lena_height, lena_width, CV_8U);
+    cv::Mat LowMap(lena_height, lena_width, CV_8U);
+    cv::threshold(Magnitude, HighMap, HighThresh, 256, cv::THRESH_BINARY);
+    cv::threshold(Magnitude, LowMap, LowThresh, 256, cv::THRESH_BINARY);
 
-    // for(int i = 1; i < lena_height - 1; i++) // 竖边索引
-    // {
-    //     for(int j = 1; j < lena_width - 1; j++) // 横边索引
-    //     {
-    //         if(NMSMapHigh[i * lena_width + j] == 0 && NMSMapLow[i * lena_width + j] != 0)
-    //         {
-    //             bool no_edge = true; // true表示周边没点，要舍弃；false表示周边有点，要保留
-    //             for(int dx = -1; dx <= 1; dx++)
-    //             {
-    //                 for(int dy = -1; dy <= 1; dy++)
-    //                 {
-    //                     if(dx == 0 && dy == 0){
-    //                         continue;
-    //                     }
-    //                     if(NMSMapHigh[(i + dx) * lena_width + j + dy] != 0) // 周边有点
-    //                     {
-    //                         no_edge = false;
-    //                         break;
-    //                     }
-    //                 }
-    //                 if(no_edge == false)
-    //                 {
-    //                     break;
-    //                 }
-    //             }
-    //             if(no_edge == false)
-    //             {
-    //                 NMSMapHigh[i * lena_width + j] = 255;
-    //             }
-    //         }
-    //     }
-    // }
-    // cv::Mat lena_nms_grad_high_merged(lena_height, lena_width, CV_8UC1, NMSMapHigh);
-    // cv::imshow("Gray Lena Gradient Amplitude NMSed Threshold Merged", lena_nms_grad_high_merged);
-    // cv::waitKey(0);
-    // cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_gray_grad_nms_merged.jpg", lena_nms_grad_high_merged);
+    std::queue<int> strongPoints;
+    for(int i = 0; i < lena_height; i++)
+    {
+        uchar * HighPtr = HighMap.ptr<uchar>(i);
+        for(int j = 0; j < lena_width; j++)
+        {
+            if(HighPtr[j] > 0)
+            {
+                strongPoints.push(i);
+                strongPoints.push(j);
+            }
+        }
+    }
+    while(! strongPoints.empty())
+    {
+        int idx_i = strongPoints.front();
+        strongPoints.pop();
+        int idx_j = strongPoints.front();
+        strongPoints.pop();
 
+        uchar * HighMPtr = HighMap.ptr<uchar>(idx_i);
+        HighMPtr[idx_j] = 255;
+        uchar * LowMPtr = LowMap.ptr<uchar>(idx_i);
+        LowMPtr[idx_j] = 0;
+        for(int dx = -1; dx <= 1; dx++)
+        {
+            if(idx_i + dx < 0 || idx_i + dx >= lena_height)
+            {
+                continue;
+            }
+            uchar * LowPtr = LowMap.ptr<uchar>(idx_i + dx);
+            for(int dy = -1; dy <= 1; dy++)
+            {
+                if(idx_j + dy < 0 || idx_j + dy >= lena_width)
+                {
+                    continue;
+                }
+                if(LowPtr[idx_j + dy] > 1e-6)
+                {
+                    strongPoints.push(idx_i + dx);
+                    strongPoints.push(idx_j + dy);
+                }
+            }
+        }
+    }
+
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_edges.jpg", HighMap);
     return 0;
 }
