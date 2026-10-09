@@ -98,102 +98,92 @@ int main()
         calc_col_gauss(lena_height - half_wind_size + i);
     }
 
-    // 计算梯度幅值和方向，方向归为4类：0, 45, 90, 135
-    // 有意思的是，没有必要计算准确的角度值
+    // 换新的思路：没必要分为0, 45, 90, 135，这4类
+    // 而是通过比较Dx和Dy的大小关系，结合插值，进行下一个模块的NMS进程
     cv::Mat Magnitude(lena_height, lena_width, CV_64F);
-    cv::Mat Theta(lena_height, lena_width, CV_8U);
+    cv::Mat DxMap(lena_height, lena_width, CV_64F);
+    cv::Mat DyMap(lena_height, lena_width, CV_64F);
     for(int i = 0; i < lena_height; i++)
     {
-        double * GImgPtr0 = GaussMap.ptr<double>(i);
-        double * GImgPtr1 = GaussMap.ptr<double>((i == lena_height - 1) ? lena_height - 1 : i + 1);
+        double * GaussPtr0 = GaussMap.ptr<double>(i);
+        double * GaussPtr1 = GaussMap.ptr<double>((i == lena_height - 1) ? lena_height - 1 : i + 1);
         double * MagPtr = Magnitude.ptr<double>(i);
-        uchar * ThePtr = Theta.ptr<uchar>(i);
+        double * DxPtr = DxMap.ptr<double>(i);
+        double * DyPtr = DyMap.ptr<double>(i);
         for(int j = 0; j < lena_width; j++)
         {
             int j1 = (j == lena_width - 1) ? lena_width - 1 : j + 1;
             // 右为正方向，两次右减左
-            double Dx = (GImgPtr0[j1] - GImgPtr0[j] + GImgPtr1[j1] - GImgPtr1[j]) / 2.0;
+            DxPtr[j] = (GaussPtr0[j1] - GaussPtr0[j] + GaussPtr1[j1] - GaussPtr1[j]) / 2.0;
             // 下为正方向，两次下减上，这里和老师的ppt有点出入
             // 实际上应该用Sobel算子，不过无所谓
-            double Dy = (GImgPtr1[j] - GImgPtr0[j] + GImgPtr1[j1] - GImgPtr0[j1]) / 2.0;
-            MagPtr[j] = sqrt(Dx * Dx + Dy * Dy);
-            // 思路：如果abs(Dx)很小，那么是90度，如果abs(Dy)很小，那么是0度；
-            // 如果Dx和Dy的模值差不多，同号则为45度，异号则为135度；
-            // 如此可以避免多次调用atan2函数
-            // 现在的问题是如何将这个界定写入代码之中
-            // 而且也别忘了22.5度这种神奇的情况应作何判断
-            double absDx = fabs(Dx);
-            double absDy = fabs(Dy);
-            if(absDx - absDy > 0.586 * absDx) // Dy相对于Dx来说很小，tan(22.5°)≈0.414
-            {
-                ThePtr[j] = 0;
-            }
-            else if(absDy - absDx > 0.586 * absDy)
-            {
-                ThePtr[j] = 90;
-            }
-            else if(Dx * Dy > 1e-6)
-            {
-                ThePtr[j] = 135;
-            }
-            else
-            {
-                ThePtr[j] = 45;
-            }
+            DyPtr[j] = (GaussPtr1[j] - GaussPtr0[j] + GaussPtr1[j1] - GaussPtr0[j1]) / 2.0;
+            MagPtr[j] = sqrt(DxPtr[j] * DxPtr[j] + DyPtr[j] * DyPtr[j]);
         }
     }
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_mag.jpg", Magnitude);
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_thet.jpg", Theta);
 
     // 计算NMS
-    // ChatGPT的意思是，只要看前后两个方向的点即可
-    // 写个lambda省点空间
-    // 这里，或者是上一步，过分简化了；所有网上的Canny算法帖子都有插值一说，我这里没有！！
-    // 这可能是导致我的结果和老师的不一样的原因
+    // 这里采用插值进行计算
+    cv::Mat NMSMap(lena_height, lena_width, CV_64F, cv::Scalar(0));
+    int x1, y1, x2, y2;
     for(int i = 0; i < lena_height; i++)
     {
-        uchar * ThetPtr = Theta.ptr<uchar>(i);
+        double * NMSPtr = NMSMap.ptr<double>(i);
         double * MagniPtr = Magnitude.ptr<double>(i);
+        double * DxMPtr = DxMap.ptr<double>(i);
+        double * DyMPtr = DyMap.ptr<double>(i);
         for(int j = 0; j < lena_width; j++)
         {
-            int dx1, dx2, dy1, dy2;
-            switch (ThetPtr[j])
+            double Dx_ij = DxMPtr[j];
+            double Dy_ij = DyMPtr[j];
+            double Mag_ij = MagniPtr[j];
+            double mag_prev = 0;
+            double mag_post = 0;
+            double ratio = 0;
+            // 从原版的4个角度分类问题，转换成：“Dx和Dy值比大小 + 插值 + NMS”的流程
+            // 插值的目的其实是为了Magnitude的NMS相比四分类更加“客观公正”
+            // 我认为不一定，但是确实看上去似乎合理些
+            x1 = std::min(lena_height - 1, i + 1);
+            x2 = std::max(0, i - 1);
+            y1 = std::min(lena_width - 1, j + 1);
+            y2 = std::max(0, j - 1);
+            if(fabs(Dx_ij) > fabs(Dy_ij)) // 横向梯度为主导
             {
-            case 0:
-                dy1 = std::max(0, j - 1);
-                dy2 = std::min(lena_width - 1, j + 1);
-                dx1 = i;
-                dx2 = i;
-                break;
-            case 45:
-                dy1 = std::min(lena_width - 1, j + 1);
-                dy2 = std::max(0, j - 1);
-                dx1 = std::max(0, i - 1);
-                dx2 = std::min(lena_height - 1, i + 1);
-                break;
-            case 90:
-                dx1 = std::max(0, i - 1);
-                dx2 = std::min(lena_height - 1, i + 1);
-                dy1 = j;
-                dy2 = j;
-                break;
-            case 135:
-                dy1 = std::max(0, j - 1);
-                dy2 = std::min(lena_width - 1, j + 1);
-                dx1 = std::max(0, i - 1);
-                dx2 = std::min(lena_height - 1, i + 1);
-                break;
+                ratio = fabs(Dy_ij / Dx_ij);
+                if(Dx_ij * Dy_ij > 0) // 45度（以下和右为正方向）
+                {
+                    // ratio为0，即为0度情况；ratio为1，即为45/135度情况
+                    mag_prev = (1 - ratio) * MagniPtr[y1] + ratio * Magnitude.at<double>(x1, y1);
+                    mag_post = (1 - ratio) * MagniPtr[y2] + ratio * Magnitude.at<double>(x2, y2);
+                }
+                else // 135度
+                {             
+                    mag_prev = (1 - ratio) * MagniPtr[y1] + ratio * Magnitude.at<double>(x2, y1);
+                    mag_post = (1 - ratio) * MagniPtr[y2] + ratio * Magnitude.at<double>(x1, y2);
+                }
             }
-            double prev = Magnitude.at<double>(dx1, dy1);
-            double post = Magnitude.at<double>(dx2, dy2);
-            double point = Magnitude.at<double>(i, j);
-            if(point < prev || point < post)
+            else // 纵向梯度为主导
             {
-                MagniPtr[j] = 0;
+                ratio = fabs(Dx_ij / Dy_ij);
+                if(Dx_ij * Dy_ij > 0) // 45度
+                {
+                    // ratio为0，即为90度情况；ratio为1，即为45/135度情况
+                    mag_prev = (1 - ratio) * Magnitude.at<double>(x1, j) + ratio * Magnitude.at<double>(x1, y1);
+                    mag_post = (1 - ratio) * Magnitude.at<double>(x2, j) + ratio * Magnitude.at<double>(x2, y2);
+                }
+                else // 135度
+                {             
+                    mag_prev = (1 - ratio) * Magnitude.at<double>(x1, j) + ratio * Magnitude.at<double>(x1, y2);
+                    mag_post = (1 - ratio) * Magnitude.at<double>(x2, j) + ratio * Magnitude.at<double>(x2, y1);
+                }
+            }
+            if(Mag_ij > mag_prev && Mag_ij > mag_post)
+            {
+                NMSPtr[j] = Mag_ij;
             }
         }
     }
-    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms.jpg", Magnitude);
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms.jpg", NMSMap);
 
     // 二值化与最终的边缘展示
     // ChatGPT建议把这个任务作为一个深度优先或广度优先的小任务
@@ -203,17 +193,17 @@ int main()
     // 我需要两个容器，一个放旧strong点，一个放新strong点
     // 每次迭代中，旧strong点拿一个扔一个，迭代结束后新strong点全部填入旧strong点
     // 扔掉的点保留在cv::Mat中
-    double MagMin;
-    double MagMax;
-    cv::Mat MagFlatten = Magnitude.reshape(0, 1);
-    cv::minMaxLoc(MagFlatten, &MagMin, &MagMax);
-    double HighThresh = 0.1 * MagMax; // not perfect, but it have to do now
+    double NMSMin;
+    double NMSMax;
+    cv::Mat NMSFlatten = NMSMap.reshape(0, 1);
+    cv::minMaxLoc(NMSFlatten, &NMSMin, &NMSMax);
+    double HighThresh = 0.1 * NMSMax; // not perfect, but it have to do now
     double LowThresh = 0.4 * HighThresh;
 
     cv::Mat HighMap(lena_height, lena_width, CV_8U);
     cv::Mat LowMap(lena_height, lena_width, CV_8U);
-    cv::threshold(Magnitude, HighMap, HighThresh, 256, cv::THRESH_BINARY);
-    cv::threshold(Magnitude, LowMap, LowThresh, 256, cv::THRESH_BINARY);
+    cv::threshold(NMSMap, HighMap, HighThresh, 256, cv::THRESH_BINARY);
+    cv::threshold(NMSMap, LowMap, LowThresh, 256, cv::THRESH_BINARY);
     cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms_high.jpg", HighMap);
     cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms_low.jpg", LowMap);
 
