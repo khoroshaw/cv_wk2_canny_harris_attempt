@@ -104,8 +104,8 @@ int main()
     cv::Mat Theta(lena_height, lena_width, CV_8U);
     for(int i = 0; i < lena_height; i++)
     {
-        uchar * GImgPtr0 = gray_img.ptr<uchar>(i);
-        uchar * GImgPtr1 = gray_img.ptr<uchar>((i == lena_height - 1) ? lena_height - 1 : i + 1);
+        double * GImgPtr0 = GaussMap.ptr<double>(i);
+        double * GImgPtr1 = GaussMap.ptr<double>((i == lena_height - 1) ? lena_height - 1 : i + 1);
         double * MagPtr = Magnitude.ptr<double>(i);
         uchar * ThePtr = Theta.ptr<uchar>(i);
         for(int j = 0; j < lena_width; j++)
@@ -134,14 +134,16 @@ int main()
             }
             else if(Dx * Dy > 1e-6)
             {
-                ThePtr[j] = 45;
+                ThePtr[j] = 135;
             }
             else
             {
-                ThePtr[j] = 135;
+                ThePtr[j] = 45;
             }
         }
     }
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_mag.jpg", Magnitude);
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_thet.jpg", Theta);
 
     // 计算NMS
     // ChatGPT的意思是，只要看前后两个方向的点即可
@@ -191,6 +193,7 @@ int main()
             }
         }
     }
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms.jpg", Magnitude);
 
     // 二值化与最终的边缘展示
     // ChatGPT建议把这个任务作为一个深度优先或广度优先的小任务
@@ -211,6 +214,8 @@ int main()
     cv::Mat LowMap(lena_height, lena_width, CV_8U);
     cv::threshold(Magnitude, HighMap, HighThresh, 256, cv::THRESH_BINARY);
     cv::threshold(Magnitude, LowMap, LowThresh, 256, cv::THRESH_BINARY);
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms_high.jpg", HighMap);
+    cv::imwrite("D:\\MyFiles\\Year1a\\cv\\week2_edges\\lena_nms_low.jpg", LowMap);
 
     std::queue<int> strongPoints;
     for(int i = 0; i < lena_height; i++)
